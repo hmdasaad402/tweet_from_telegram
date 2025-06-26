@@ -1,9 +1,10 @@
-from telethon import TelegramClient, events
+import os
 import asyncio
 import logging
 import tweepy
 from datetime import datetime, timedelta
-import os
+from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from tempfile import NamedTemporaryFile
 import time
 
@@ -14,202 +15,182 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Telegram Configuration
-api_id = 20572087
-api_hash = '044ac78962bfd63b5487896a2cf33151'
-channel_username = '@hamza20300'
+# Configuration - Use environment variables in production!
+API_ID = int(os.getenv('TELEGRAM_API_ID', 20572087))
+API_HASH = os.getenv('TELEGRAM_API_HASH', '044ac78962bfd63b5487896a2cf33151')
+CHANNEL_USERNAME = os.getenv('TELEGRAM_CHANNEL', '@hamza20300')
 
 # Twitter Configuration
-twitter_api_key = 'bwyk8VCfY5IGtKLQdv3oHQ51a'
-twitter_api_secret = 'XvKWkYqcSNs9sMS5vx1V4F9Ads93MHtVm4eagUo73EWBspI3l9'
-twitter_access_token = '1692979869120929792-VbAE4cV0oJEBdfaEDur3FP17mK4ZN2'
-twitter_access_secret = 'AGV19KVYsj9HgqwEPhv37GOgT4DT1uek97UyP3UF8INST'
+TWITTER_API_KEY = os.getenv('TWITTER_API_KEY')
+TWITTER_API_SECRET = os.getenv('TWITTER_API_SECRET')
+TWITTER_ACCESS_TOKEN = os.getenv('TWITTER_ACCESS_TOKEN')
+TWITTER_ACCESS_SECRET = os.getenv('TWITTER_ACCESS_SECRET')
 
-# Posting Configuration
-POST_INTERVAL_MINUTES = 2  # Post every 28 minutes
-MAX_MESSAGE_HISTORY = 10    # Keep last 10 messages for fallback
-SOURCE_ATTRIBUTION = " (منقول من مصدر فلسطيني)"  # Palestinian source attribution
+# App Settings
+POST_INTERVAL_MINUTES = 28
+MAX_MESSAGE_HISTORY = 10
+SOURCE_ATTRIBUTION = " (منقول من مصدر فلسطيني)"
+SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING')  # For cloud deployment
 
-# Initialize Twitter clients
-try:
-    auth_v1 = tweepy.OAuth1UserHandler(
-        twitter_api_key,
-        twitter_api_secret,
-        twitter_access_token,
-        twitter_access_secret
-    )
-    twitter_api = tweepy.API(auth_v1, wait_on_rate_limit=True)
-    twitter_client = tweepy.Client(
-        consumer_key=twitter_api_key,
-        consumer_secret=twitter_api_secret,
-        access_token=twitter_access_token,
-        access_token_secret=twitter_access_secret,
-        wait_on_rate_limit=True
-    )
-    logger.info("Twitter clients initialized successfully")
-except Exception as e:
-    logger.error(f"Twitter initialization failed: {e}")
-    raise
-
-class MessageProcessor:
+class BotClient:
     def __init__(self):
         self.message_history = []
         self.last_post_time = None
         self.posting_lock = asyncio.Lock()
+        self.initialize_clients()
 
-    async def add_message(self, msg):
-        """Add new message to history"""
-        self.message_history.append(msg)
-        if len(self.message_history) > MAX_MESSAGE_HISTORY:
-            self.message_history.pop(0)
-
-    async def get_next_message_to_post(self):
-        """Get most recent message that hasn't been posted yet"""
-        if not self.message_history:
-            return None
-        return self.message_history[-1]  # Always try latest first
-
-    async def should_post_now(self):
-        """Check if it's time to post based on interval"""
-        if not self.last_post_time:
-            return True
-        elapsed = datetime.now() - self.last_post_time
-        return elapsed.total_seconds() >= POST_INTERVAL_MINUTES * 60
-
-    async def mark_posted(self, msg):
-        """Remove successfully posted message from history"""
-        if msg in self.message_history:
-            self.message_history.remove(msg)
-        self.last_post_time = datetime.now()
-
-async def download_telegram_media(msg):
-    """Download media from Telegram message to temp file"""
-    try:
-        if not msg.media:
-            return None
-            
-        temp_file = NamedTemporaryFile(delete=False, suffix='.jpg')
-        await msg.download_media(file=temp_file.name)
-        return temp_file.name
-    except Exception as e:
-        logger.error(f"Media download failed: {e}")
-        return None
-
-async def post_to_twitter(msg):
-    """Post message with media to Twitter with retry logic"""
-    if not twitter_client or not twitter_api:
-        logger.error("Twitter client not available")
-        return False
-    
-    max_retries = 3
-    retry_delay = 5
-    
-    for attempt in range(max_retries):
+    def initialize_clients(self):
+        """Initialize Twitter and Telegram clients"""
         try:
-            # Prepare text with Palestinian source attribution
-            tweet_text = (msg.text or "") + SOURCE_ATTRIBUTION
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-            
-            # Handle media
-            media_ids = []
-            if msg.media:
-                media_path = await download_telegram_media(msg)
-                if media_path:
-                    try:
-                        media = twitter_api.media_upload(media_path)
-                        media_ids.append(media.media_id)
-                        logger.info(f"📷 Media uploaded (ID: {media.media_id})")
-                    except Exception as e:
-                        logger.error(f"Media upload failed: {e}")
-                    finally:
-                        if os.path.exists(media_path):
-                            os.unlink(media_path)
-            
-            # Post tweet (ensure total length <= 280 characters)
-            max_text_length = 280 - len(SOURCE_ATTRIBUTION)
-            response = twitter_client.create_tweet(
-                text=tweet_text[:max_text_length] + SOURCE_ATTRIBUTION,
-                media_ids=media_ids if media_ids else None
+            # Twitter Client
+            auth_v1 = tweepy.OAuth1UserHandler(
+                TWITTER_API_KEY,
+                TWITTER_API_SECRET,
+                TWITTER_ACCESS_TOKEN,
+                TWITTER_ACCESS_SECRET
             )
-            logger.info(f"✅ Posted to Twitter (ID: {response.data['id']})")
-            return True
-            
-        except tweepy.TweepyException as e:
-            logger.error(f"Twitter API error (attempt {attempt + 1}): {e}")
-            if attempt == max_retries - 1:
-                return False
-            time.sleep(retry_delay)
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            return False
-    
-    return False
+            self.twitter_api = tweepy.API(auth_v1, wait_on_rate_limit=True)
+            self.twitter_client = tweepy.Client(
+                consumer_key=TWITTER_API_KEY,
+                consumer_secret=TWITTER_API_SECRET,
+                access_token=TWITTER_ACCESS_TOKEN,
+                access_token_secret=TWITTER_ACCESS_SECRET,
+                wait_on_rate_limit=True
+            )
+            logger.info("Twitter clients initialized")
 
-async def periodic_poster(processor):
-    """Periodically check and post messages"""
-    while True:
+            # Telegram Client
+            if SESSION_STRING:
+                self.telegram_client = TelegramClient(
+                    StringSession(SESSION_STRING), API_ID, API_HASH
+                )
+            else:
+                self.telegram_client = TelegramClient(
+                    'user_monitor_session', API_ID, API_HASH
+                )
+            logger.info("Telegram client initialized")
+
+        except Exception as e:
+            logger.error(f"Client initialization failed: {e}")
+            raise
+
+    async def connect_telegram(self):
+        """Handle Telegram connection with retries"""
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                if not self.telegram_client.is_connected():
+                    await self.telegram_client.connect()
+
+                if not await self.telegram_client.is_user_authorized():
+                    if SESSION_STRING:
+                        raise ConnectionError("Invalid session string")
+                    raise ConnectionError("Pre-authentication required")
+
+                logger.info("Telegram connection established")
+                return True
+
+            except Exception as e:
+                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    return False
+                await asyncio.sleep(10)
+
+    async def download_media(self, msg):
+        """Download media to temporary file"""
         try:
-            async with processor.posting_lock:
-                if await processor.should_post_now():
-                    msg = await processor.get_next_message_to_post()
-                    if msg:
-                        success = await post_to_twitter(msg)
-                        if success:
-                            await processor.mark_posted(msg)
-                        else:
-                            logger.warning("Posting failed, will try again next cycle")
-                    else:
-                        logger.info("No messages to post")
-                else:
-                    next_post = processor.last_post_time + timedelta(minutes=POST_INTERVAL_MINUTES)
-                    wait_seconds = (next_post - datetime.now()).total_seconds()
-                    if wait_seconds > 0:
-                        logger.info(f"Next post scheduled at {next_post}")
-        
-            await asyncio.sleep(60)  # Check every minute
-            
+            if not msg.media:
+                return None
+                
+            temp_file = NamedTemporaryFile(delete=False, suffix='.jpg')
+            await msg.download_media(file=temp_file.name)
+            return temp_file.name
         except Exception as e:
-            logger.error(f"Error in periodic poster: {e}")
-            await asyncio.sleep(60)
+            logger.error(f"Media download failed: {e}")
+            return None
 
-async def main():
-    processor = MessageProcessor()
-    
-    # Telegram client setup
-    client = TelegramClient('user_monitor_session', api_id, api_hash)
-    
-    try:
-        await client.start()
-        if not await client.is_user_authorized():
-            logger.error("User not authorized.")
+    async def post_to_twitter(self, msg):
+        """Post message to Twitter with error handling"""
+        if not self.twitter_client:
+            logger.error("Twitter client not available")
+            return False
+        
+        for attempt in range(3):
+            try:
+                # Prepare tweet content
+                base_text = msg.text or ""
+                tweet_text = f"{base_text[:280-len(SOURCE_ATTRIBUTION)]}{SOURCE_ATTRIBUTION}"
+                
+                # Handle media
+                media_ids = []
+                if msg.media:
+                    media_path = await self.download_media(msg)
+                    if media_path:
+                        try:
+                            media = self.twitter_api.media_upload(media_path)
+                            media_ids.append(media.media_id)
+                        finally:
+                            if os.path.exists(media_path):
+                                os.unlink(media_path)
+                
+                # Post tweet
+                response = self.twitter_client.create_tweet(
+                    text=tweet_text,
+                    media_ids=media_ids if media_ids else None
+                )
+                logger.info(f"Posted to Twitter (ID: {response.data['id']})")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1} failed: {e}")
+                if attempt == 2:
+                    return False
+                await asyncio.sleep(5)
+
+    async def run(self):
+        """Main bot execution loop"""
+        if not await self.connect_telegram():
+            logger.error("Failed to connect to Telegram")
             return
 
-        channel = await client.get_entity(channel_username)
-        logger.info(f"✅ Channel found: {channel.title}")
+        try:
+            channel = await self.telegram_client.get_entity(CHANNEL_USERNAME)
+            logger.info(f"Monitoring channel: {channel.title}")
 
-        # Start periodic posting task
-        asyncio.create_task(periodic_poster(processor))
+            @self.telegram_client.on(events.NewMessage(chats=channel))
+            async def handler(event):
+                with self.posting_lock:
+                    self.message_history.append(event.message)
+                    if len(self.message_history) > MAX_MESSAGE_HISTORY:
+                        self.message_history.pop(0)
+                    logger.info(f"New message: {event.message.id}")
 
-        @client.on(events.NewMessage(chats=channel))
-        async def handler(event):
-            try:
-                msg = event.message
-                logger.info(f"\n📩 New message:\n🕒 {msg.date}\n📝 {msg.text or '[Media]'}")
-                await processor.add_message(msg)
-            except Exception as e:
-                logger.error(f"Message processing error: {e}")
+            # Start periodic posting
+            while True:
+                await asyncio.sleep(60)  # Check every minute
+                
+                with self.posting_lock:
+                    if (not self.last_post_time or 
+                        (datetime.now() - self.last_post_time).total_seconds() >= POST_INTERVAL_MINUTES * 60):
+                        
+                        if self.message_history:
+                            msg = self.message_history[-1]
+                            if await self.post_to_twitter(msg):
+                                self.message_history.remove(msg)
+                                self.last_post_time = datetime.now()
 
-        logger.info(f"👂 Listening to {channel_username}...")
-        await client.run_until_disconnected()
+        except Exception as e:
+            logger.error(f"Bot error: {e}")
+        finally:
+            await self.telegram_client.disconnect()
 
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-    finally:
-        await client.disconnect()
-        logger.info("Disconnected")
+async def main():
+    bot = BotClient()
+    await bot.run()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Stopped by user")
+    # For Windows compatibility
+    if os.name == 'nt':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    
+    asyncio.run(main())
