@@ -7,6 +7,10 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from tempfile import NamedTemporaryFile
 import time
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -15,41 +19,58 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration - Use environment variables in production!
-API_ID = 20572087
-API_HASH = '044ac78962bfd63b5487896a2cf33151'
-CHANNEL_USERNAME =  '@hamza20300'
+def get_env_var(name, default=None):
+    """Safely get environment variable with validation"""
+    value = os.getenv(name, default)
+    if value is None:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+# Configuration with validation
+try:
+    # Telegram
+   # Configuration - Use environment variables in production!
+    API_ID = 20572087
+    API_HASH = '044ac78962bfd63b5487896a2cf33151'
+    CHANNEL_USERNAME =  '@hamza20300'
 
 # Twitter Configuration
-TWITTER_API_KEY = 'bwyk8VCfY5IGtKLQdv3oHQ51a'
-TWITTER_API_SECRET = 'XvKWkYqcSNs9sMS5vx1V4F9Ads93MHtVm4eagUo73EWBspI3l9'
-TWITTER_ACCESS_TOKEN = 'XvKWkYqcSNs9sMS5vx1V4F9Ads93MHtVm4eagUo73EWBspI3l9'
-TWITTER_ACCESS_SECRET = 'AGV19KVYsj9HgqwEPhv37GOgT4DT1uek97UyP3UF8INST'
+    TWITTER_API_KEY = 'bwyk8VCfY5IGtKLQdv3oHQ51a'
+    TWITTER_API_SECRET = 'XvKWkYqcSNs9sMS5vx1V4F9Ads93MHtVm4eagUo73EWBspI3l9'
+    TWITTER_ACCESS_TOKEN = 'XvKWkYqcSNs9sMS5vx1V4F9Ads93MHtVm4eagUo73EWBspI3l9'
+    TWITTER_ACCESS_SECRET = 'AGV19KVYsj9HgqwEPhv37GOgT4DT1uek97UyP3UF8INST'
 
-# App Settings
-POST_INTERVAL_MINUTES = 28
-MAX_MESSAGE_HISTORY = 10
-SOURCE_ATTRIBUTION = " (منقول من مصدر فلسطيني)"
-SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING')  # For cloud deployment
+    
+    # App Settings
+    POST_INTERVAL_MINUTES = int(get_env_var('POST_INTERVAL_MINUTES', '28'))
+    MAX_MESSAGE_HISTORY = int(get_env_var('MAX_MESSAGE_HISTORY', '10'))
+    SOURCE_ATTRIBUTION = get_env_var('SOURCE_ATTRIBUTION', ' (منقول من مصدر فلسطيني)')
+    
+except ValueError as e:
+    logger.error(f"Configuration error: {e}")
+    exit(1)
 
 class BotClient:
     def __init__(self):
         self.message_history = []
         self.last_post_time = None
-        self.posting_lock = asyncio.Lock()
+        self.posting_lock = asyncio.Lock()  # Changed to asyncio.Lock
         self.initialize_clients()
 
     def initialize_clients(self):
-        """Initialize Twitter and Telegram clients"""
+        """Initialize Twitter and Telegram clients with error handling"""
         try:
             # Twitter Client
-            auth_v1 = tweepy.OAuth1UserHandler(
-                TWITTER_API_KEY,
-                TWITTER_API_SECRET,
-                TWITTER_ACCESS_TOKEN,
-                TWITTER_ACCESS_SECRET
+            self.twitter_api = tweepy.API(
+                tweepy.OAuth1UserHandler(
+                    consumer_key=TWITTER_API_KEY,
+                    consumer_secret=TWITTER_API_SECRET,
+                    access_token=TWITTER_ACCESS_TOKEN,
+                    access_token_secret=TWITTER_ACCESS_SECRET
+                ),
+                wait_on_rate_limit=True
             )
-            self.twitter_api = tweepy.API(auth_v1, wait_on_rate_limit=True)
+            
             self.twitter_client = tweepy.Client(
                 consumer_key=TWITTER_API_KEY,
                 consumer_secret=TWITTER_API_SECRET,
@@ -61,40 +82,21 @@ class BotClient:
 
             # Telegram Client
             if SESSION_STRING:
-                self.telegram_client = TelegramClient(
-                    StringSession(SESSION_STRING), API_ID, API_HASH
-                )
+                session = StringSession(SESSION_STRING)
             else:
-                self.telegram_client = TelegramClient(
-                    'user_monitor_session.session', API_ID, API_HASH
-                )
+                session = 'user_monitor_session.session'
+                
+            self.telegram_client = TelegramClient(
+                session,
+                API_ID,
+                API_HASH,
+                system_version="4.16.30-vxCONNECTED"
+            )
             logger.info("Telegram client initialized")
 
         except Exception as e:
             logger.error(f"Client initialization failed: {e}")
             raise
-
-    async def connect_telegram(self):
-        """Handle Telegram connection with retries"""
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                if not self.telegram_client.is_connected():
-                    await self.telegram_client.connect()
-
-                if not await self.telegram_client.is_user_authorized():
-                    if SESSION_STRING:
-                        raise ConnectionError("Invalid session string")
-                    raise ConnectionError("Pre-authentication required")
-
-                logger.info("Telegram connection established")
-                return True
-
-            except Exception as e:
-                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
-                if attempt == max_retries - 1:
-                    return False
-                await asyncio.sleep(10)
 
     async def download_media(self, msg):
         """Download media to temporary file"""
@@ -159,7 +161,7 @@ class BotClient:
 
             @self.telegram_client.on(events.NewMessage(chats=channel))
             async def handler(event):
-                with self.posting_lock:
+                async with self.posting_lock:  # Fixed: using async with
                     self.message_history.append(event.message)
                     if len(self.message_history) > MAX_MESSAGE_HISTORY:
                         self.message_history.pop(0)
@@ -169,7 +171,7 @@ class BotClient:
             while True:
                 await asyncio.sleep(60)  # Check every minute
                 
-                with self.posting_lock:
+                async with self.posting_lock:  # Fixed: using async with
                     if (not self.last_post_time or 
                         (datetime.now() - self.last_post_time).total_seconds() >= POST_INTERVAL_MINUTES * 60):
                         
@@ -183,6 +185,28 @@ class BotClient:
             logger.error(f"Bot error: {e}")
         finally:
             await self.telegram_client.disconnect()
+
+    async def connect_telegram(self):
+        """Handle Telegram connection with retries"""
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                if not self.telegram_client.is_connected():
+                    await self.telegram_client.connect()
+
+                if not await self.telegram_client.is_user_authorized():
+                    if SESSION_STRING:
+                        raise ConnectionError("Invalid session string")
+                    raise ConnectionError("Pre-authentication required")
+
+                logger.info("Telegram connection established")
+                return True
+
+            except Exception as e:
+                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    return False
+                await asyncio.sleep(10)
 
 async def main():
     bot = BotClient()
