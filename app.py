@@ -66,7 +66,7 @@ class BotClient:
                 )
             else:
                 self.telegram_client = TelegramClient(
-                    'user_monitor_session', API_ID, API_HASH
+                    'user_monitor_session.session', API_ID, API_HASH
                 )
             logger.info("Telegram client initialized")
 
