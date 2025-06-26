@@ -42,9 +42,9 @@ try:
 
     
     # App Settings
-    POST_INTERVAL_MINUTES = int(get_env_var('POST_INTERVAL_MINUTES', '28'))
-    MAX_MESSAGE_HISTORY = int(get_env_var('MAX_MESSAGE_HISTORY', '10'))
-    SOURCE_ATTRIBUTION = get_env_var('SOURCE_ATTRIBUTION', ' (منقول من مصدر فلسطيني)')
+    POST_INTERVAL_MINUTES =  2
+    MAX_MESSAGE_HISTORY = 10
+    SOURCE_ATTRIBUTION =  ' (منقول من مصدر فلسطيني)'
     
 except ValueError as e:
     logger.error(f"Configuration error: {e}")
