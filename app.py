@@ -7,6 +7,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from tempfile import NamedTemporaryFile
 import time
+import random
 
 # Configure logging
 logging.basicConfig(
@@ -15,11 +16,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration - Use environment variables in production!
+# Configuration
 API_ID = 20572087
 API_HASH = '044ac78962bfd63b5487896a2cf33151'
 CHANNEL_USERNAME = '@hamza20300'
-SESSION_STRING = None  # Add this line to define the variable
+SESSION_STRING = None
 
 # Twitter Configuration
 TWITTER_API_KEY = 'bwyk8VCfY5IGtKLQdv3oHQ51a'
@@ -31,6 +32,8 @@ TWITTER_ACCESS_SECRET = 'AGV19KVYsj9HgqwEPhv37GOgT4DT1uek97UyP3UF8INST'
 POST_INTERVAL_MINUTES = 2
 MAX_MESSAGE_HISTORY = 10
 SOURCE_ATTRIBUTION = ' (منقول من مصدر فلسطيني)'
+MAX_RETRIES = 5  # Increased from 3
+BASE_DELAY = 10  # Base delay in seconds
 
 class BotClient:
     def __init__(self):
@@ -40,9 +43,8 @@ class BotClient:
         self.initialize_clients()
 
     def initialize_clients(self):
-        """Initialize Twitter and Telegram clients with error handling"""
         try:
-            # Twitter Client
+            # Twitter Client with longer timeout
             self.twitter_api = tweepy.API(
                 tweepy.OAuth1UserHandler(
                     consumer_key=TWITTER_API_KEY,
@@ -50,7 +52,10 @@ class BotClient:
                     access_token=TWITTER_ACCESS_TOKEN,
                     access_token_secret=TWITTER_ACCESS_SECRET
                 ),
-                wait_on_rate_limit=True
+                wait_on_rate_limit=True,
+                timeout=60,
+                retry_count=3,
+                retry_delay=5
             )
             
             self.twitter_client = tweepy.Client(
@@ -63,8 +68,8 @@ class BotClient:
             logger.info("Twitter clients initialized")
 
             # Telegram Client
-            session = 'user_monitor_session.session'  # Default session file
-            if SESSION_STRING:  # Now this variable exists
+            session = 'user_monitor_session.session'
+            if SESSION_STRING:
                 session = StringSession(SESSION_STRING)
                 
             self.telegram_client = TelegramClient(
@@ -80,7 +85,6 @@ class BotClient:
             raise
 
     async def download_media(self, msg):
-        """Download media to temporary file"""
         try:
             if not msg.media:
                 return None
@@ -93,13 +97,18 @@ class BotClient:
             return None
 
     async def post_to_twitter(self, msg):
-        """Post message to Twitter with error handling"""
         if not self.twitter_client:
             logger.error("Twitter client not available")
             return False
         
-        for attempt in range(3):
+        for attempt in range(MAX_RETRIES):
             try:
+                # Exponential backoff with jitter
+                delay = min(BASE_DELAY * (2 ** attempt) + random.uniform(0, 1), 300)
+                if attempt > 0:
+                    logger.info(f"Waiting {delay:.1f} seconds before retry...")
+                    await asyncio.sleep(delay)
+
                 # Prepare tweet content
                 base_text = msg.text or ""
                 tweet_text = f"{base_text[:280-len(SOURCE_ATTRIBUTION)]}{SOURCE_ATTRIBUTION}"
@@ -116,7 +125,7 @@ class BotClient:
                             if os.path.exists(media_path):
                                 os.unlink(media_path)
                 
-                # Post tweet
+                # Post tweet with longer timeout
                 response = self.twitter_client.create_tweet(
                     text=tweet_text,
                     media_ids=media_ids if media_ids else None
@@ -124,14 +133,23 @@ class BotClient:
                 logger.info(f"Posted to Twitter (ID: {response.data['id']})")
                 return True
                 
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed: {e}")
-                if attempt == 2:
+            except tweepy.TweepyException as e:
+                error_msg = str(e)
+                if "500" in error_msg:
+                    logger.warning(f"Twitter server error (attempt {attempt + 1})")
+                else:
+                    logger.error(f"Twitter API error (attempt {attempt + 1}): {e}")
+                
+                if attempt == MAX_RETRIES - 1:
+                    logger.error("Max retries reached, giving up on this message")
                     return False
-                await asyncio.sleep(5)
+
+            except Exception as e:
+                logger.error(f"Unexpected error (attempt {attempt + 1}): {e}")
+                if attempt == MAX_RETRIES - 1:
+                    return False
 
     async def run(self):
-        """Main bot execution loop"""
         if not await self.connect_telegram():
             logger.error("Failed to connect to Telegram")
             return
@@ -148,9 +166,8 @@ class BotClient:
                         self.message_history.pop(0)
                     logger.info(f"New message: {event.message.id}")
 
-            # Start periodic posting
             while True:
-                await asyncio.sleep(60)  # Check every minute
+                await asyncio.sleep(60)
                 
                 async with self.posting_lock:
                     if (not self.last_post_time or 
@@ -168,7 +185,6 @@ class BotClient:
             await self.telegram_client.disconnect()
 
     async def connect_telegram(self):
-        """Handle Telegram connection with retries"""
         max_retries = 5
         for attempt in range(max_retries):
             try:
@@ -194,7 +210,6 @@ async def main():
     await bot.run()
 
 if __name__ == "__main__":
-    # For Windows compatibility
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     
