@@ -8,7 +8,6 @@ from telethon.sessions import StringSession
 from tempfile import NamedTemporaryFile
 import time
 
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -16,37 +15,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-
-# Configuration with validation
-try:
-    # Telegram
-   # Configuration - Use environment variables in production!
-    API_ID = 20572087
-    API_HASH = '044ac78962bfd63b5487896a2cf33151'
-    CHANNEL_USERNAME =  '@hamza20300'
+# Configuration - Use environment variables in production!
+API_ID = 20572087
+API_HASH = '044ac78962bfd63b5487896a2cf33151'
+CHANNEL_USERNAME = '@hamza20300'
+SESSION_STRING = None  # Add this line to define the variable
 
 # Twitter Configuration
-    TWITTER_API_KEY = 'bwyk8VCfY5IGtKLQdv3oHQ51a'
-    TWITTER_API_SECRET = 'XvKWkYqcSNs9sMS5vx1V4F9Ads93MHtVm4eagUo73EWBspI3l9'
-    TWITTER_ACCESS_TOKEN = 'XvKWkYqcSNs9sMS5vx1V4F9Ads93MHtVm4eagUo73EWBspI3l9'
-    TWITTER_ACCESS_SECRET = 'AGV19KVYsj9HgqwEPhv37GOgT4DT1uek97UyP3UF8INST'
+TWITTER_API_KEY = 'bwyk8VCfY5IGtKLQdv3oHQ51a'
+TWITTER_API_SECRET = 'XvKWkYqcSNs9sMS5vx1V4F9Ads93MHtVm4eagUo73EWBspI3l9'
+TWITTER_ACCESS_TOKEN = '1692979869120929792-VbAE4cV0oJEBdfaEDur3FP17mK4ZN2'
+TWITTER_ACCESS_SECRET = 'AGV19KVYsj9HgqwEPhv37GOgT4DT1uek97UyP3UF8INST'
 
-    
-    # App Settings
-    POST_INTERVAL_MINUTES =  2
-    MAX_MESSAGE_HISTORY = 10
-    SOURCE_ATTRIBUTION =  ' (منقول من مصدر فلسطيني)'
-    
-except ValueError as e:
-    logger.error(f"Configuration error: {e}")
-    exit(1)
+# App Settings
+POST_INTERVAL_MINUTES = 2
+MAX_MESSAGE_HISTORY = 10
+SOURCE_ATTRIBUTION = ' (منقول من مصدر فلسطيني)'
 
 class BotClient:
     def __init__(self):
         self.message_history = []
         self.last_post_time = None
-        self.posting_lock = asyncio.Lock()  # Changed to asyncio.Lock
+        self.posting_lock = asyncio.Lock()
         self.initialize_clients()
 
     def initialize_clients(self):
@@ -73,10 +63,9 @@ class BotClient:
             logger.info("Twitter clients initialized")
 
             # Telegram Client
-            if SESSION_STRING:
+            session = 'user_monitor_session.session'  # Default session file
+            if SESSION_STRING:  # Now this variable exists
                 session = StringSession(SESSION_STRING)
-            else:
-                session = 'user_monitor_session.session'
                 
             self.telegram_client = TelegramClient(
                 session,
@@ -153,7 +142,7 @@ class BotClient:
 
             @self.telegram_client.on(events.NewMessage(chats=channel))
             async def handler(event):
-                async with self.posting_lock:  # Fixed: using async with
+                async with self.posting_lock:
                     self.message_history.append(event.message)
                     if len(self.message_history) > MAX_MESSAGE_HISTORY:
                         self.message_history.pop(0)
@@ -163,7 +152,7 @@ class BotClient:
             while True:
                 await asyncio.sleep(60)  # Check every minute
                 
-                async with self.posting_lock:  # Fixed: using async with
+                async with self.posting_lock:
                     if (not self.last_post_time or 
                         (datetime.now() - self.last_post_time).total_seconds() >= POST_INTERVAL_MINUTES * 60):
                         
