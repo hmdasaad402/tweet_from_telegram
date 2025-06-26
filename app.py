@@ -7,7 +7,6 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from tempfile import NamedTemporaryFile
 import time
-from dotenv import load_dotenv
 
 
 # Configure logging
@@ -17,12 +16,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def get_env_var(name, default=None):
-    """Safely get environment variable with validation"""
-    value = os.getenv(name, default)
-    if value is None:
-        raise ValueError(f"Missing required environment variable: {name}")
-    return value
+
 
 # Configuration with validation
 try:
