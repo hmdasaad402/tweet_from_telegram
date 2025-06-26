@@ -26,7 +26,7 @@ twitter_access_token = '1692979869120929792-VbAE4cV0oJEBdfaEDur3FP17mK4ZN2'
 twitter_access_secret = 'AGV19KVYsj9HgqwEPhv37GOgT4DT1uek97UyP3UF8INST'
 
 # Posting Configuration
-POST_INTERVAL_MINUTES = 28  # Post every 28 minutes
+POST_INTERVAL_MINUTES = 2  # Post every 28 minutes
 MAX_MESSAGE_HISTORY = 10    # Keep last 10 messages for fallback
 SOURCE_ATTRIBUTION = " (منقول من مصدر فلسطيني)"  # Palestinian source attribution
 
