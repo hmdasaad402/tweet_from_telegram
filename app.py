@@ -39,7 +39,7 @@ class Config:
     TWITTER_ACCESS_SECRET = 'UzHHzgsF1Z6gW2bZigHCzSAJ0HAZE2pKNbTV8zqVlZp4h'
     
     # Posting
-    POST_INTERVAL = timedelta(minutes=30)
+    POST_INTERVAL = timedelta(minutes=3)
     MAX_MEDIA_SIZE_MB = 15
     MAX_TWEET_LENGTH = 280
     MAX_THREAD_LENGTH = 25  # Max tweets in a thread
