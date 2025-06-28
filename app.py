@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 API_ID = 20572087
 API_HASH = '044ac78962bfd63b5487896a2cf33151'
-CHANNEL_USERNAME = '@hamza20300'
+CHANNEL_USERNAME = '@weebiok'
 SESSION_STRING = None
 
 # Twitter Configuration
